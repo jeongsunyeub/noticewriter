@@ -1,17 +1,13 @@
 import streamlit as st
 import google.generativeai as genai
-# import gspread # 나중에 실제 연동 시 사용
-# from oauth2client.service_account import ServiceAccountCredentials
 import requests
 import json
 import os
-
 
 # ==========================================
 # 1. Configuration & Data Structures
 # ==========================================
 
-# 페이지 설정
 st.set_page_config(
     page_title="AI Smart Notification",
     page_icon="📝",
@@ -19,63 +15,88 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 7대 업종별 체크리스트 데이터 (Pre-defined Checklists)
+# 7대 업종별 체크리스트 데이터 (Updated V2)
+# 'type': 'multiselect_dynamic' -> User can add/remove items. Default is all options.
 INDUSTRY_TEMPLATES = {
     "Child Care": {
         "icon": "👶",
+        "label_ko": "어린이집/유치원 (아이 돌봄)",
+        "label_en": "Child Care / Kindergarten",
+        "label_ja": "保育園 / 幼稚園",
+        "is_pet": False,
         "items": {
             "mood": {"type": "radio", "label": "기분 (Mood)", "options": ["매우 좋음", "좋음", "보통", "조금 칭얼댐", "컨디션 저조"]},
             "meal": {"type": "slider", "label": "식사량 (Meal Intake)", "min": 0, "max": 100, "step": 10, "unit": "%"},
             "nap": {"type": "radio", "label": "낮잠 (Nap)", "options": ["안 잠", "30분 미만", "1시간", "1시간 30분", "2시간 이상"]},
-            "toilet": {"type": "multiselect", "label": "배변 (Toilet)", "options": ["소변", "대변", "실수함", "특이사항 없음"]},
-            "activity": {"type": "text", "label": "주요 활동 (Activity)", "placeholder": "예: 블록 놀이, 그림 그리기"},
-            "health": {"type": "checkbox", "label": "건강 체크 (Health)", "options": ["열이 조금 있음", "콧물", "기침", "상처/멍"]}
+            "toilet": {"type": "multiselect_dynamic", "label": "배변 (Toilet)", "options": ["소변", "대변", "실수함", "특이사항 없음"]},
+            "activity": {"type": "multiselect_dynamic", "label": "주요 활동 (Activity)", "options": ["블록 놀이", "그림 그리기", "동화책 읽기", "바깥 놀이", "율동 시간"]},
+            "health": {"type": "multiselect_dynamic", "label": "건강 체크 (Health)", "options": ["열이 조금 있음", "콧물", "기침", "상처/멍", "매우 건강함"]}
         }
     },
     "Dog Kindergarten": {
         "icon": "🐶",
+        "label_ko": "애견 유치원",
+        "label_en": "Dog Kindergarten",
+        "label_ja": "犬の幼稚園",
+        "is_pet": True,
         "items": {
             "condition": {"type": "radio", "label": "컨디션 (Condition)", "options": ["날아다님", "활발함", "차분함", "피곤해함", "아파보임"]},
             "poop": {"type": "radio", "label": "배변 상태 (Stool)", "options": ["양호 (Good)", "묽음 (Soft)", "설사 (Diarrhea)", "없음 (None)"]},
-            "food": {"type": "checkbox", "label": "식사/간식 (Intake)", "options": ["사료 완밥", "사료 남김", "간식 먹음", "약 복용"]},
-            "play": {"type": "multiselect", "label": "활동/놀이 (Play)", "options": ["공놀이", "터그놀이", "노즈워크", "술래잡기", "수영"]},
+            "food": {"type": "multiselect_dynamic", "label": "식사/간식 (Intake)", "options": ["사료 완밥", "사료 남김", "간식 먹음", "약 복용"]},
+            "play": {"type": "multiselect_dynamic", "label": "활동/놀이 (Play)", "options": ["공놀이", "터그놀이", "노즈워크", "술래잡기", "수영", "낮잠 시간"]},
             "social": {"type": "slider", "label": "사회성 (Social)", "min": 1, "max": 5, "help": "1:혼자 돎 ~ 5:핵인싸"},
             "rest": {"type": "radio", "label": "휴식 (Rest)", "options": ["충분히 잠", "중간중간 쉼", "거의 안 쉼"]}
         }
     },
     "Dog Grooming": {
         "icon": "✂️",
+        "label_ko": "애견 미용",
+        "label_en": "Dog Grooming",
+        "label_ja": "トリミングサロン",
+        "is_pet": True,
         "items": {
             "style": {"type": "text", "label": "미용 스타일 (Style)", "placeholder": "예: 스포팅, 곰돌이컷, 3mm 클리핑"},
             "tangle": {"type": "slider", "label": "털 엉킴 (Tangles)", "min": 1, "max": 5, "help": "1:없음 ~ 5:심함(추가요금)"},
             "manner": {"type": "radio", "label": "미용 매너 (Manner)", "options": ["천사", "얌전함", "보통", "조금 싫어함", "입질 있음"]},
-            "skin": {"type": "multiselect", "label": "피부/건강 (Skin/Health)", "options": ["습진", "각질", "귀 발적", "슬개골 주의", "사마귀"]},
-            "procedure": {"type": "checkbox", "label": "시술 내용 (Procedures)", "options": ["목욕", "위생미용", "전체미용", "스파", "팩"]}
+            "skin": {"type": "multiselect_dynamic", "label": "피부/건강 (Skin/Health)", "options": ["습진", "각질", "귀 발적", "슬개골 주의", "사마귀", "피부 깨끗함"]},
+            "procedure": {"type": "multiselect_dynamic", "label": "시술 내용 (Procedures)", "options": ["목욕", "위생미용", "전체미용", "스파", "팩", "발톱 정리"]}
         }
     },
     "Senior Care": {
         "icon": "👵",
+        "label_ko": "요양 보호 (시니어 케어)",
+        "label_en": "Senior Care",
+        "label_ja": "介護 (シニアケア)",
+        "is_pet": False,
         "items": {
             "vitals": {"type": "text", "label": "바이탈 (Vitals)", "placeholder": "혈압 120/80, 체온 36.5"},
             "meal_amount": {"type": "radio", "label": "식사량 (Intake)", "options": ["전량 섭취", "1/2 섭취", "소량 섭취", "거부"]},
             "medication": {"type": "radio", "label": "투약 (Meds)", "options": ["투약 완료", "미투약", "거부"]},
             "mood_senior": {"type": "radio", "label": "기분 (Mood)", "options": ["평온함", "즐거움", "우울함", "불안함"]},
-            "activity_physical": {"type": "multiselect", "label": "신체 활동 (Activity)", "options": ["산책", "체조", "물리치료", "인지 프로그램"]},
+            "activity_physical": {"type": "multiselect_dynamic", "label": "신체 활동 (Activity)", "options": ["산책", "체조", "물리치료", "인지 프로그램", "TV 시청"]},
             "sleep": {"type": "radio", "label": "수면 (Sleep)", "options": ["숙면", "자다 깸", "불면"]}
         }
     },
     "Academy": {
         "icon": "📚",
+        "label_ko": "학원 / 공부방",
+        "label_en": "Academy",
+        "label_ja": "塾 / 教室",
+        "is_pet": False,
         "items": {
             "progress": {"type": "text", "label": "오늘의 진도 (Progress)", "placeholder": "예: 수학 3단원, 영어 단어 20개"},
             "attitude": {"type": "slider", "label": "수업 태도 (Attitude)", "min": 1, "max": 10, "help": "10점 만점"},
             "homework": {"type": "radio", "label": "과제 수행 (Homework)", "options": ["완벽 수행", "대부분 수행", "일부 수행", "미수행"]},
             "understanding": {"type": "radio", "label": "이해도 (Understanding)", "options": ["빠름", "보통", "노력이 필요함"]},
-            "notice": {"type": "checkbox", "label": "알림 사항 (Notice)", "options": ["교재비 납부", "보강 필요", "다음 주 휴강", "시험 예정"]}
+            "notice": {"type": "multiselect_dynamic", "label": "알림 사항 (Notice)", "options": ["교재비 납부", "보강 필요", "다음 주 휴강", "시험 예정", "숙제 잘 해옴"]}
         }
     },
     "Sports (Taekwondo/Gym)": {
         "icon": "🥋",
+        "label_ko": "태권도 / 체육관",
+        "label_en": "Sports (Taekwondo/Gym)",
+        "label_ja": "テコンドー / ジム",
+        "is_pet": False,
         "items": {
             "program": {"type": "text", "label": "운동 프로그램 (Program)", "placeholder": "예: 품새, 줄넘기, 스파링"},
             "energy": {"type": "slider", "label": "에너지 레벨 (Energy)", "min": 1, "max": 10},
@@ -86,8 +107,12 @@ INDUSTRY_TEMPLATES = {
     },
     "PT / Pilates": {
         "icon": "💪",
+        "label_ko": "PT / 필라테스",
+        "label_en": "PT / Pilates",
+        "label_ja": "パーソナルトレーニング",
+        "is_pet": False,
         "items": {
-            "body_part": {"type": "multiselect", "label": "운동 부위 (Parts)", "options": ["상체", "하체", "코어", "전신", "유산소"]},
+            "body_part": {"type": "multiselect_dynamic", "label": "운동 부위 (Parts)", "options": ["상체", "하체", "코어", "전신", "유산소", "스트레칭"]},
             "intensity": {"type": "slider", "label": "수행 강도 (Intensity)", "min": 1, "max": 10},
             "condition_pt": {"type": "text", "label": "통증/컨디션 (Pain/Condition)", "placeholder": "예: 허리 통증 호소, 컨디션 좋음"},
             "diet": {"type": "radio", "label": "식단 체크 (Diet)", "options": ["잘 지킴", "보통", "폭식함", "피드백 필요"]},
@@ -96,7 +121,6 @@ INDUSTRY_TEMPLATES = {
     }
 }
 
-# 다국어 팩 (Language Pack)
 LANG_PACK = {
     "Korean": {
         "title": "AI 스마트 알림장",
@@ -107,17 +131,11 @@ LANG_PACK = {
         "login_fail": "로그인에 실패했습니다.",
         "welcome": "환영합니다, 사용자님!",
         "sidebar_title": "설정",
-        "industries": {
-            "Child Care": "어린이집",
-            "Dog Kindergarten": "애견 유치원",
-            "Dog Grooming": "애견 미용",
-            "Senior Care": "요양 보호 (시니어 케어)",
-            "Academy": "학원 / 공부방",
-            "Sports (Taekwondo/Gym)": "태권도 / 체육관",
-            "PT / Pilates": "PT / 필라테스"
-        },
         "customer_label": "고객 이름 (아이/반려견/회원명)",
-        "store_label": "매장/기관 이름"
+        "store_label": "매장/기관 이름",
+        "custom_add": "+ 직접 추가",
+        "tier_label": "멤버십 등급",
+        "length_label": "글자 수 제한"
     },
     "English": {
         "title": "AI Smart Notification",
@@ -128,17 +146,11 @@ LANG_PACK = {
         "login_fail": "Login failed.",
         "welcome": "Welcome, User!",
         "sidebar_title": "Settings",
-        "industries": {
-            "Child Care": "Child Care",
-            "Dog Kindergarten": "Dog Kindergarten",
-            "Dog Grooming": "Dog Grooming",
-            "Senior Care": "Senior Care",
-            "Academy": "Academy",
-            "Sports (Taekwondo/Gym)": "Sports (Taekwondo/Gym)",
-            "PT / Pilates": "PT / Pilates"
-        },
         "customer_label": "Customer Name (Child/Pet/Member)",
-        "store_label": "Store/Institution Name"
+        "store_label": "Store/Institution Name",
+        "custom_add": "+ Add Custom",
+        "tier_label": "Membership Tier",
+        "length_label": "Character Limit"
     },
     "Japanese": {
         "title": "AI スマート連絡帳",
@@ -149,17 +161,11 @@ LANG_PACK = {
         "login_fail": "ログインに失敗しました。",
         "welcome": "ようこそ、ユーザー様！",
         "sidebar_title": "設定",
-        "industries": {
-            "Child Care": "保育園",
-            "Dog Kindergarten": "犬の幼稚園",
-            "Dog Grooming": "トリミングサロン",
-            "Senior Care": "介護 (シニアケア)",
-            "Academy": "塾 / 教室",
-            "Sports (Taekwondo/Gym)": "テコンドー / ジム",
-            "PT / Pilates": "パーソナルトレーニング"
-        },
         "customer_label": "お客様の名前 (子供/ペット/会員)",
-        "store_label": "店舗/施設名"
+        "store_label": "店舗/施設名",
+        "custom_add": "+ 直接追加",
+        "tier_label": "会員ランク",
+        "length_label": "文字数制限"
     }
 }
 
@@ -168,57 +174,52 @@ LANG_PACK = {
 # ==========================================
 
 def detect_language():
-    """
-    간단한 언어 감지 로직. (실제 배포 시 request headers 활용)
-    여기서는 한국어를 기본값으로 설정.
-    """
     return "Korean"
 
 def check_login():
-    """
-    Google Sheets 연동 로그인 시뮬레이션.
-    실제 구현 시 gspread로 유저 DB 시트를 조회.
-    """
-    # 실제 연동 코드는 주석 처리
-    # scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-    # creds = ServiceAccountCredentials.from_json_keyfile_name('client_secret.json', scope)
-    # client = gspread.authorize(creds)
-    # ...
-    return True # 무조건 로그인 성공으로 처리 (데모용)
+    return True
 
-def generate_ai_content(api_key, industry, data_summary, lang, customer_name, store_name):
+def generate_ai_content(api_key, industry, data_summary, lang, customer_name, store_name, is_pet, target_length):
     """
     Gemini API를 사용하여 알림장 텍스트 생성
     """
     if not api_key:
-        return "⚠️ 오류: Gemini API 키가 설정되지 않았습니다. 사이드바에서 키를 입력해주세요."
+        return "⚠️ 오류: API 키가 설정되지 않았습니다 (secrets.toml 확인 필요)."
     
     try:
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel('gemma-3-27b-it')
         
+        # Tone & Manner Instructions
+        tone_instruction = ""
+        if is_pet:
+            tone_instruction = "- **주의**: 대상이 '개(반려동물)'이므로, 이름 뒤에 '님'이나 존칭을 붙이지 마세요. (예: '초코님' X -> '초코' O). 보호자에게는 정중하게 존댓말을 사용하세요."
+        else:
+            tone_instruction = "- 대상(사람)에게 적절한 호칭과 존댓말을 사용하세요."
+
         prompt = f"""
         당신은 {industry} 분야의 베테랑 전문가입니다.
         아래 입력된 항목들을 바탕으로 고객(학부모/보호자/회원)에게 보낼 정중하고 전문적인 '일일 알림장(리포트)'을 작성해주세요.
         
         [기본 정보]
-        - 수신자(아이/반려견/회원 이름): {customer_name}
-        - 발신자(매장/기관 이름): {store_name}
+        - 수신자(이름): {customer_name}
+        - 발신자(매장/기관): {store_name}
 
         [입력 데이터]
         {data_summary}
         
         [지시사항]
         1. 언어: {lang}
-        2. 분량: 300~500자 내외
+        2. 목표 글자 수: 공백 포함 약 {target_length}자
         3. 톤앤매너: 친절함, 전문적, 신뢰감
+        {tone_instruction}
         4. 형식:
-           - 인사말 (반드시 수신자 이름을 포함)
-           - 주요 활동 및 상태 요약 (입력된 데이터 기반)
+           - 인사말 (수신자 이름 포함)
+           - 주요 활동 및 상태 요약 (데이터 기반으로 자연스럽게 서술)
            - 긍정적인 피드백 또는 당부 사항
-           - 마무리 인사 (반드시 발신자 이름을 포함)
-        5. 이모지를 적절히 사용하여 가독성을 높여주세요.
-        6. **중요**: 마크다운 헤더('#')는 절대 사용하지 마세요. 대신 굵은 글씨('**')나 구분선 등을 사용하세요.
+           - 마무리 인사 (발신자 이름 포함)
+        5. 이모지: 적절히 사용하여 가독성을 높임.
+        6. **금지사항**: 마크다운 볼드체('**')는 절대 사용하지 마세요. 모든 텍스트는 일반 텍스트(Plain Text)로 출력하세요.
         """
         
         with st.spinner('AI가 알림장을 작성 중입니다... (Writing report...)'):
@@ -232,15 +233,16 @@ def generate_ai_content(api_key, industry, data_summary, lang, customer_name, st
 # ==========================================
 
 def main():
-    # 1. 초기 설정 (언어 및 로그인)
     if "lang" not in st.session_state:
         st.session_state.lang = detect_language()
     
-    # 사이드바 설정
+    # ------------------------------------
+    # Sidebar: Settings & Tier System
+    # ------------------------------------
     with st.sidebar:
         st.title(LANG_PACK[st.session_state.lang]["sidebar_title"])
         
-        # 언어 변경
+        # Language
         selected_lang = st.selectbox(
             "Language", 
             ["Korean", "English", "Japanese"], 
@@ -250,142 +252,176 @@ def main():
             st.session_state.lang = selected_lang
             st.rerun()
 
-        # API Key (secrets.toml에서 로드)
-        if "GEMINI_API_KEY" in st.secrets:
-             api_key = st.secrets["GEMINI_API_KEY"]
-             # st.sidebar.success("API Key Loaded secure!") 
+        st.divider()
+        
+        # Checking Secrets for API Key
+        if "GEMINI_API_KEY" not in st.secrets:
+            st.error("❌ `secrets.toml`에 API Key가 없습니다.")
+            st.stop()
+        api_key = st.secrets["GEMINI_API_KEY"]
+
+        # Tier Simulation
+        st.subheader(LANG_PACK[st.session_state.lang]["tier_label"])
+        user_tier = st.radio("Membership", ["Free", "Pro"], index=0, horizontal=True)
+        
+        if user_tier == "Pro":
+            target_length = st.select_slider(
+                LANG_PACK[st.session_state.lang]["length_label"], 
+                options=[300, 600, 900], 
+                value=600
+            )
         else:
-             api_key = st.text_input("Gemini API Key", type="password")
-             if not api_key:
-                st.warning("API Key가 필요합니다.")
+            # Free tier fixed to 50
+            target_length = 50
+            st.caption(f"Free Plan: {target_length}자 제한")
 
         st.divider()
-        st.info("💡 **Tip**: 7개 업종별 템플릿을 사용하여 빠르고 간편하게 알림장을 작성하세요.")
+        st.info("💡 **Pro Tip**: 유료 회원은 글자 수 조절이 가능합니다.")
 
-    # 2. 메인 타이틀
+    # ------------------------------------
+    # Main Content
+    # ------------------------------------
     st.title(LANG_PACK[st.session_state.lang]["title"])
 
-    # 로그인 체크
     if not check_login():
         st.error(LANG_PACK[st.session_state.lang]["login_fail"])
         return
     
-    # 3. 업종 선택
-    st.subheader("1. " + LANG_PACK[st.session_state.lang]["select_industry"])
-    
-    industry_names = list(INDUSTRY_TEMPLATES.keys())
-    # 보기 좋게 아이콘과 함께 표시하기 위한 포맷팅
-    def format_func(key):
-        return f"{INDUSTRY_TEMPLATES[key]['icon']} {LANG_PACK[st.session_state.lang]['industries'][key]}"
-
-    # 공통 입력 필드 (매장 이름, 고객 이름)
+    # Industry Inputs
     col_info1, col_info2 = st.columns(2)
     with col_info1:
-        store_name = st.text_input(LANG_PACK[st.session_state.lang]["store_label"], placeholder="예: 햇살 어린이집, 멍멍 유치원")
+        store_name = st.text_input(LANG_PACK[st.session_state.lang]["store_label"], placeholder="매장/기관명")
     with col_info2:
-        customer_name = st.text_input(LANG_PACK[st.session_state.lang]["customer_label"], placeholder="예: 김철수, 뽀삐")
+        customer_name = st.text_input(LANG_PACK[st.session_state.lang]["customer_label"], placeholder="이름")
         
     st.divider()
 
-    selected_industry_key = st.radio("", industry_names, format_func=format_func, horizontal=True)
+    # Industry Select (Checklist Style Radio)
+    st.subheader("1. " + LANG_PACK[st.session_state.lang]["select_industry"])
+    
+    industry_keys = list(INDUSTRY_TEMPLATES.keys())
+    
+    # Dynamic Label Function
+    def format_func(key):
+        template = INDUSTRY_TEMPLATES[key]
+        lang_code = st.session_state.lang  # Korean, English, Japanese
+        if lang_code == "Korean":
+            label = template["label_ko"]
+        elif lang_code == "Japanese":
+            label = template["label_ja"]
+        else:
+            label = template["label_en"]
+        return f"{template['icon']} {label}"
+
+    selected_industry_key = st.radio("", industry_keys, format_func=format_func, horizontal=False) # Vertical list as requested "Checklist style" often implies vertical radio or checkboxes
     
     if selected_industry_key:
         template = INDUSTRY_TEMPLATES[selected_industry_key]
-        st.markdown(f"### {template['icon']} {selected_industry_key}")
+        st.markdown(f"### {format_func(selected_industry_key)}")
         
-        # 4. 동적 폼 생성 (Dynamic Form Generation)
+        # Dynamic Form
         user_inputs = {}
         
-        # UI 레이아웃을 위해 컬럼 분할 (2열)
-        col1, col2 = st.columns(2)
         items = list(template["items"].items())
+        col1, col2 = st.columns(2)
         half = (len(items) + 1) // 2
         
-        # 왼쪽 컬럼
+        def render_item(key, config):
+            value = None
+            if config["type"] == "radio":
+                value = st.radio(config["label"], config["options"], key=key)
+            
+            elif config["type"] == "slider":
+                value = st.slider(config["label"], 
+                                  min_value=config.get("min", 0), 
+                                  max_value=config.get("max", 10),
+                                  step=config.get("step", 1),
+                                  help=config.get("help", ""),
+                                  key=key)
+            
+            elif config["type"] == "text":
+                value = st.text_input(config["label"], placeholder=config.get("placeholder", ""), key=key)
+            
+            elif config["type"] == "multiselect_dynamic":
+                # Session State Key for Options
+                opt_key = f"{key}_options"
+                
+                # Initialize options in session state if not exists
+                if opt_key not in st.session_state:
+                    st.session_state[opt_key] = config["options"].copy()
+                
+                # Custom Add Logic
+                def add_custom_item():
+                    new_item = st.session_state[f"{key}_custom_input"]
+                    if new_item and new_item not in st.session_state[opt_key]:
+                        st.session_state[opt_key].append(new_item)
+                        # Optional: Automatically select the new item
+                        # st.session_state[f"{key}_select"] = st.session_state.get(f"{key}_select", []) + [new_item]
+
+                # 1. Multiselect (Default empty)
+                selected = st.multiselect(
+                    config["label"], 
+                    options=st.session_state[opt_key], 
+                    default=[], # Start empty
+                    key=f"{key}_select"
+                )
+                
+                # 2. Add Custom Input (with on_change callback)
+                st.text_input(
+                    f"{config['label']} ({LANG_PACK[st.session_state.lang]['custom_add']})", 
+                    key=f"{key}_custom_input",
+                    on_change=add_custom_item
+                )
+                
+                value = selected
+
+            return value
+
+        # Render Columns
         with col1:
             for key, config in items[:half]:
-                if config["type"] == "radio":
-                    user_inputs[key] = st.radio(config["label"], config["options"], key=key)
-                elif config["type"] == "checkbox":
-                    # Checkbox group implementation via multiselect or customized checkboxes
-                    # 여기서는 여러 옵션을 선택할 수 있는 multiselect가 더 깔끔함.
-                    # 단, config['type']이 checkbox지만 실제로는 다중 선택 의미라면 multiselect 권장
-                    # 사용자 요청 스펙에 'Checkbox'가 있으므로, UI 적 구현을 위해 multiselect 로 대체하거나 여러개 st.checkbox 생성
-                    # 여기서는 'options' 리스트가 있으므로 multiselect가 적합
-                    if "options" in config:
-                        user_inputs[key] = st.multiselect(config["label"], config["options"], key=key)
-                    else:
-                        # 단일 체크박스
-                        user_inputs[key] = st.checkbox(config["label"], key=key)
-                elif config["type"] == "slider":
-                    user_inputs[key] = st.slider(config["label"], 
-                                                 min_value=config.get("min", 0), 
-                                                 max_value=config.get("max", 10),
-                                                 step=config.get("step", 1),
-                                                 help=config.get("help", ""),
-                                                 key=key)
-                elif config["type"] == "text":
-                    user_inputs[key] = st.text_input(config["label"], placeholder=config.get("placeholder", ""), key=key)
-                elif config["type"] == "multiselect":
-                    user_inputs[key] = st.multiselect(config["label"], config["options"], key=key)
-
-        # 오른쪽 컬럼
+                user_inputs[key] = render_item(key, config)
         with col2:
             for key, config in items[half:]:
-                # 위와 동일한 로직 (함수로 빼면 좋지만 직관성을 위해 반복)
-                if config["type"] == "radio":
-                    user_inputs[key] = st.radio(config["label"], config["options"], key=key)
-                elif config["type"] == "checkbox":
-                    if "options" in config:
-                        user_inputs[key] = st.multiselect(config["label"], config["options"], key=key)
-                    else:
-                        user_inputs[key] = st.checkbox(config["label"], key=key)
-                elif config["type"] == "slider":
-                    user_inputs[key] = st.slider(config["label"], 
-                                                 min_value=config.get("min", 0), 
-                                                 max_value=config.get("max", 10),
-                                                 step=config.get("step", 1),
-                                                 help=config.get("help", ""),
-                                                 key=key)
-                elif config["type"] == "text":
-                    user_inputs[key] = st.text_input(config["label"], placeholder=config.get("placeholder", ""), key=key)
-                elif config["type"] == "multiselect":
-                    user_inputs[key] = st.multiselect(config["label"], config["options"], key=key)
+                user_inputs[key] = render_item(key, config)
 
-        # 공통: 특이사항 메모
         st.markdown("---")
         memo = st.text_area(LANG_PACK[st.session_state.lang]["memo_label"], height=100)
         user_inputs["memo"] = memo
 
-        # 5. 생성 버튼 및 AI 요청
+        # Generate Button
         if st.button(LANG_PACK[st.session_state.lang]["generate_btn"], type="primary", use_container_width=True):
-            # 입력값 정리 (프롬프트용 문자열 생성)
+            # Format Data Summary
             data_summary = ""
             for k, v in user_inputs.items():
-                # 리스트인 경우 (multiselect)
                 if isinstance(v, list):
                     v_str = ", ".join(v) if v else "없음"
                 else:
                     v_str = str(v)
                 
-                # 라벨 찾기 (memo 제외)
                 label = k
                 if k in template["items"]:
                     label = template["items"][k]["label"]
                 
                 data_summary += f"- {label}: {v_str}\n"
 
-            # AI 생성 호출
-            result_text = generate_ai_content(api_key, selected_industry_key, data_summary, st.session_state.lang, customer_name, store_name)
+            # Call AI
+            result_text = generate_ai_content(
+                api_key, 
+                selected_industry_key, 
+                data_summary, 
+                st.session_state.lang, 
+                customer_name, 
+                store_name,
+                template["is_pet"],
+                target_length
+            )
             
-            # 6. 결과 출력
             st.divider()
             st.subheader(LANG_PACK[st.session_state.lang]["result_header"])
-            st.success("✅ 작성이 완료되었습니다!")
+            st.success("✅ Complete!")
             st.text_area("Result", value=result_text, height=400)
-            
-            # 복사 기능 (Streamlit 실험적 기능 활용 or 텍스트 선택 유도)
-            st.caption("위 텍스트를 복사하여 사용하세요.")
+            st.caption("Copy the text above.")
 
 if __name__ == "__main__":
     main()
